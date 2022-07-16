@@ -1,4 +1,4 @@
-/* ========================================
+ /* ========================================
  *
  *  Multi Display 
  *    description: Main Loop
@@ -48,9 +48,9 @@ float altitude(const int32_t press, const float seaLevel) {
 const char* ssid       = "xxxxxxxx";
 const char* password   = "xxxxxxxx";
 
-const char* ntpServer = "ntp.nict.jp"; //"pool.ntp.org";
-constexpr long  gmtOffset_sec = 9 * 3600;  // time difference 9hours
-constexpr int   daylightOffset_sec = 0;    // no summer time
+const char* ntpServer = "ntp.nict.jp";      //"pool.ntp.org";
+constexpr long  gmtOffset_sec = 9 * 3600;   // time difference 9hours
+constexpr int   daylightOffset_sec = 0;     // no summer time
 
 constexpr uint8_t COM_DIG1 = 15;
 constexpr uint8_t COM_DIG2 = 2;
@@ -65,10 +65,11 @@ constexpr uint8_t DRIVE_F  = 25;
 constexpr uint8_t DRIVE_G  = 12;
 constexpr uint8_t DRIVE_DP = 32;
 
-#define MAX_MATRIX_COM  11
-//  当初、時分割は１０段階だったが、
-//  '8' と '.' を同時に出すと、なぜか 7seg LED が全く光らない現象が起き、結局原因不明
-//  対策として、11時分割にして、2桁目の '.' だけ単独で表示することにした。
+#define MAX_DIGIT       4                 //  Digits
+#define MATRIX_COM      (MAX_DIGIT+1)     //  LED Matrix Common Cathode
+#define LED_CNT         2                 //  7seg LED
+#define MAX_MATRIX_COM  (MATRIX_COM*LED_CNT)  //  Max Matrix Common Cathode
+
 const uint8_t COM_TABLE[MAX_MATRIX_COM][4] = {
   { LOW, LOW, LOW, LOW },
   { LOW, LOW, HIGH,LOW },
@@ -80,13 +81,12 @@ const uint8_t COM_TABLE[MAX_MATRIX_COM][4] = {
   { HIGH,LOW, LOW, HIGH},
   { HIGH,LOW,HIGH, HIGH},
   { LOW,HIGH, LOW, HIGH},
-  { LOW, LOW,HIGH, HIGH}, //  2桁目のdot用
 };
-#define MAX_MATRIX_DRV  8
+#define MAX_MATRIX_DRV  8               // Max Matrix Drive
 const uint8_t DRV_TABLE[MAX_MATRIX_DRV] = {
   DRIVE_A,DRIVE_B,DRIVE_C,DRIVE_D,DRIVE_E,DRIVE_F,DRIVE_G,DRIVE_DP
 };
-const uint8_t MAKE_NUM_TABLE[33][MAX_MATRIX_DRV] = {
+const uint8_t CHARACTER_TABLE[33][MAX_MATRIX_DRV] = {
   {HIGH,HIGH,HIGH,HIGH,HIGH,HIGH, LOW, LOW}, // 0
   { LOW,HIGH,HIGH, LOW, LOW, LOW, LOW, LOW}, // 1
   {HIGH,HIGH, LOW,HIGH,HIGH, LOW,HIGH, LOW}, // 2
@@ -99,8 +99,8 @@ const uint8_t MAKE_NUM_TABLE[33][MAX_MATRIX_DRV] = {
   {HIGH,HIGH,HIGH,HIGH, LOW,HIGH,HIGH, LOW}, // 9  
   { LOW, LOW, LOW, LOW, LOW, LOW, LOW, LOW}, // 10: ''  nothing
   { LOW, LOW, LOW, LOW, LOW, LOW,HIGH, LOW}, // 11: '-'
-  {HIGH,HIGH, LOW, LOW, LOW, LOW, LOW, LOW}, // 12: ':' no 7seg
-  { LOW, LOW,HIGH, LOW, LOW, LOW, LOW, LOW}, // 13: '°' no 7seg
+  {HIGH,HIGH, LOW, LOW, LOW, LOW, LOW, LOW}, // 12: ':' no 7seg Digits
+  { LOW, LOW,HIGH, LOW, LOW, LOW, LOW, LOW}, // 13: '°' no 7seg Digits
   { LOW, LOW, LOW,HIGH,HIGH, LOW,HIGH, LOW}, // 14: 'c'
   {HIGH,HIGH, LOW, LOW,HIGH,HIGH,HIGH, LOW}, // 15: 'P'
   { LOW, LOW,HIGH, LOW,HIGH,HIGH,HIGH, LOW}, // 16: 'h'
@@ -124,7 +124,7 @@ const uint8_t MAKE_NUM_TABLE[33][MAX_MATRIX_DRV] = {
 //------------------------------------------------------------------
 hw_timer_t * timer = NULL;
 uint8_t led_dynamic_cnt;
-uint8_t led_num[MAX_MATRIX_COM] = {0};
+uint8_t led_num[LED_CNT][MATRIX_COM] = {0};
 uint8_t flow_counter;
 //------------------------------------------------------------------
 // Interrupt
@@ -136,9 +136,10 @@ void ARDUINO_ISR_ATTR onTimer(){
   digitalWrite(COM_DIG2, COM_TABLE[led_dynamic_cnt][1]);
   digitalWrite(COM_DIG3, COM_TABLE[led_dynamic_cnt][2]);
   digitalWrite(COM_SW, COM_TABLE[led_dynamic_cnt][3]);
-  uint8_t digit_num = led_num[led_dynamic_cnt];
+
+  uint8_t chara = led_num[led_dynamic_cnt/MATRIX_COM][led_dynamic_cnt%MATRIX_COM];
   for (int j=0; j<MAX_MATRIX_DRV; ++j){
-    digitalWrite(DRV_TABLE[j], MAKE_NUM_TABLE[digit_num][j]);
+    digitalWrite(DRV_TABLE[j], CHARACTER_TABLE[chara][j]);
   }
   led_dynamic_cnt++;
   if (led_dynamic_cnt == MAX_MATRIX_COM){led_dynamic_cnt = 0;}
@@ -194,8 +195,8 @@ void setup() {
   BME680.setOversampling(PressureSensor, Oversample16);     // Use enumerated type values
   //Serial.print(F("- Setting IIR filter to a value of 4 samples\n"));
   BME680.setIIRFilter(IIR4);  // Use enumerated type values
-  //Serial.print(F("- Setting gas measurement to 320\xC2\xB0\x43 for 150ms\n"));  // "�C" symbols
-  BME680.setGas(320, 150);  // 320�c for 150 milliseconds
+  //Serial.print(F("- Setting gas measurement to 320\xC2\xB0\x43 for 150ms\n"));  // "C" symbols
+  BME680.setGas(320, 150);  // 320c for 150 milliseconds
 
   //  variables
   led_dynamic_cnt = 0;
@@ -219,11 +220,11 @@ void setup() {
 //------------------------------------------------------------------
 void loop() {
   struct tm timeinfo;
-  static int32_t  temp, humidity, pressure, gas;  // BME readings
+  static int32_t  temp=0, humidity=0, pressure=0, gas=0;  // BME readings
 
   if (!getLocalTime(&timeinfo)){
-    for (int i=0; i<MAX_MATRIX_COM; ++i){ led_num[i] = 11;}
-    led_num[4] = 10;
+    for (int i=0; i<MAX_MATRIX_COM; ++i){ led_num[i/MATRIX_COM][i%MATRIX_COM] = 11;}
+    led_num[0][4] = 10;
   }
 
   else {
@@ -233,67 +234,65 @@ void loop() {
     }
 
     //  7seg Display 
-    led_num[0] = timeinfo.tm_hour/10;
-    led_num[1] = timeinfo.tm_hour%10;
-    led_num[2] = timeinfo.tm_min/10;
-    led_num[3] = timeinfo.tm_min%10;
-    led_num[4] = (timeinfo.tm_sec%2)?10:12;
+    led_num[0][0] = timeinfo.tm_hour/10;
+    led_num[0][1] = timeinfo.tm_hour%10;
+    led_num[0][2] = timeinfo.tm_min/10;
+    led_num[0][3] = timeinfo.tm_min%10;
+    led_num[0][4] = (timeinfo.tm_sec%2)?10:12;
     flow_counter = timeinfo.tm_sec/2;
     switch (flow_counter%5){
       default:{
-        for(int i=5; i<9; ++i){led_num[i] = 11;}
-        led_num[9] = led_num[10] = 10;
+        for(int i=0; i<MAX_DIGIT; ++i){led_num[1][i] = 11;}
+        led_num[1][4] = 10;
         break;
       }
       case 1:{  //  temperature
         //sprintf(buf, "%4d %3d.%02d", (loopCounter - 1) % 9999,  // Clamp to 9999,
         //        (int8_t)(temp / 100), (uint8_t)(temp % 100));   // Temp in decidegrees
         if (temp > 0){
-          led_num[5] = (temp/1000)!=0?(temp/1000):10;
-          led_num[6] = ((temp/100)%10);
-          led_num[7] = (temp%100)/10;
+          led_num[1][0] = (temp/1000)!=0?(temp/1000):10;
+          led_num[1][1] = ((temp/100)%10)+20; // +20 -> dot
+          led_num[1][2] = (temp%100)/10;
         }
         else if (temp > -1000){ // -0.1 .. -9.9
-          led_num[5] = 11; // '-'
-          led_num[6] = ((-temp/100)%10);
-          led_num[7] = (-temp%100)/10;
+          led_num[1][0] = 11; // '-'
+          led_num[1][1] = ((-temp/100)%10)+20; // +20 -> dot
+          led_num[1][2] = (-temp%100)/10;
         }
         else {
-          led_num[5] = led_num[6] = led_num[7] = 18; //'EEE'
+          led_num[1][0] = led_num[1][1] = led_num[1][2] = 18; //'EEE'
         }
-        led_num[8] = 14;
-        led_num[9] = 13;
-        led_num[10] = 31; // decimal point of 2nd number
+        led_num[1][3] = 14;
+        led_num[1][4] = 13;
         break;
       }
       case 2:{  //  humidity
         //sprintf(buf, "%3d.%03d", (int8_t)(humidity / 1000),
         //      (uint16_t)(humidity % 1000));  // Humidity milli-pct
-        led_num[5] = (humidity/10000)!=0?(humidity/10000):10;
-        led_num[6] = ((humidity/1000)%10);
-        led_num[7] = (humidity%1000)/100;
-        led_num[8] = 32;
-        led_num[9] = 13;
-        led_num[10] = 31; // decimal point of 2nd number
+        led_num[1][0] = (humidity/10000)!=0?(humidity/10000):10;
+        led_num[1][1] = ((humidity/1000)%10)+20; // +20 -> dot
+        led_num[1][2] = (humidity%1000)/100;
+        led_num[1][3] = 32;
+        led_num[1][4] = 13;
         break;
       }
       case 3:{  //  Air Pressure (100times of Hect Pascal)
         //sprintf(buf, "%7d.%02d", (int16_t)(pressure / 100),
         //      (uint8_t)(pressure % 100));  // Pressure Pascals
-        led_num[5] = (pressure/100000)!=0?pressure/100000:10;
-        led_num[6] = (pressure/10000)%10;
-        led_num[7] = (pressure/1000)%10;
-        led_num[8] = (pressure/100)%10;
-        led_num[9] = led_num[10] = 10;
+        led_num[1][0] = (pressure/100000)!=0?pressure/100000:10;
+        led_num[1][1] = (pressure/10000)%10;
+        led_num[1][2] = (pressure/1000)%10;
+        led_num[1][3] = (pressure/100)%10;
+        led_num[1][4] = 10;
         break;
       }
 //      case 4:{  // Gasセンサー
           //sprintf(buf, "%4d.%02d\n", (int16_t)(gas / 100), (uint8_t)(gas % 100));  // Resistance milliohms
-//        led_num[5] = (gas/100000)!=0?gas/100000:10;
-//        led_num[6] = (gas/10000)%10;
-//        led_num[7] = (gas/1000)%10;
-//        led_num[8] = 17;
-//        led_num[9] = 10;
+//        led_num[1][0] = (gas/100000)!=0?gas/100000:10;
+//        led_num[1][1] = (gas/10000)%10;
+//        led_num[1][2] = (gas/1000)%10;
+//        led_num[1][3] = 17;
+//        led_num[1][4] = 10;
 //        break;
 //      }
     }
