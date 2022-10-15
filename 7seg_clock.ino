@@ -217,14 +217,14 @@ void setup() {
   led_dynamic_cnt = 0;
   flow_counter = 0;
 
-#if 0
+#if 1 // SmartConfig 使用
 	// WiFI を AP + STA モードにする
 	WiFi.mode(WIFI_AP_STA);
 	WiFi.beginSmartConfig(); //< SmartConfigの初期化
 
 	// スマホからのアクセスを待つ
 	while (!WiFi.smartConfigDone()) {
-		delay(500);
+		delay(100);
 	}
 	// スマホからSSIDとパスワードが送られてきた
   digitalWrite(DRIVE_A, LOW); //  'b'
