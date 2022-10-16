@@ -13,7 +13,7 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <Arduino_JSON.h>
-#include "time.h"
+#include <time.h>
 
 #include "Zanshin_BME680.h"  // Include the BME680 Sensor library
 /**************************************************************************************************
@@ -59,6 +59,8 @@ constexpr uint8_t DRIVE_E  = 33;
 constexpr uint8_t DRIVE_F  = 25;
 constexpr uint8_t DRIVE_G  = 12;
 constexpr uint8_t DRIVE_DP = 32;
+constexpr uint8_t TEST_IN  = 16;
+constexpr uint8_t TEST_OUT = 17;
 
 #define MAX_DIGIT       4                   //  Digits
 #define MATRIX_COM      (MAX_DIGIT+1)       //  One 7seg Matrix Common Cathode
@@ -159,7 +161,10 @@ const uint8_t CHARACTER_TABLE[68][MAX_MATRIX_DRV] = {
 hw_timer_t * timer = NULL;
 uint8_t led_dynamic_cnt;
 uint8_t led_num[LED_CNT][MATRIX_COM] = {0};
-uint8_t flow_counter;
+struct tm timeinfo;
+int32_t  temp=0, humidity=0, pressure=0, gas=0;  // BME readings
+int test_mode = 0;
+int free_running_cnt;
 //------------------------------------------------------------------
 // Interrupt
 void ARDUINO_ISR_ATTR onTimer(){
@@ -180,12 +185,15 @@ void ARDUINO_ISR_ATTR onTimer(){
   }
   led_dynamic_cnt++;
   if (led_dynamic_cnt == MAX_MATRIX_COM){led_dynamic_cnt = 0;}
+  free_running_cnt++;
 }
 //------------------------------------------------------------------
 void setup() {
  int i=0;
 
   // GPIO setting
+  pinMode(TEST_IN, INPUT); 
+  pinMode(TEST_OUT, OUTPUT);
   pinMode(COM_DIG1, OUTPUT);
   pinMode(COM_DIG2, OUTPUT);
   pinMode(COM_DIG3, OUTPUT);
@@ -204,18 +212,24 @@ void setup() {
   digitalWrite(COM_DIG3, LOW);
   digitalWrite(COM_SW, LOW);
 
-  digitalWrite(DRIVE_A, HIGH);  //  'A'
-  digitalWrite(DRIVE_B, HIGH);
-  digitalWrite(DRIVE_C, HIGH);
+  digitalWrite(DRIVE_A, LOW);  //  ''
+  digitalWrite(DRIVE_B, LOW);
+  digitalWrite(DRIVE_C, LOW);
   digitalWrite(DRIVE_D, LOW);
-  digitalWrite(DRIVE_E, HIGH);
-  digitalWrite(DRIVE_F, HIGH);
-  digitalWrite(DRIVE_G, HIGH);
-  digitalWrite(DRIVE_DP, LOW);
+  digitalWrite(DRIVE_E, LOW);
+  digitalWrite(DRIVE_F, LOW);
+  digitalWrite(DRIVE_G, LOW);
+  digitalWrite(DRIVE_DP,LOW);  
 
   //  variables
   led_dynamic_cnt = 0;
-  flow_counter = 0;
+  free_running_cnt = 0;
+
+  test_mode = digitalRead(TEST_IN);
+  if (test_mode==HIGH){
+    interrupt_settings();
+    return;
+  }
 
 #if 1 // SmartConfig 使用
 	// WiFI を AP + STA モードにする
@@ -223,18 +237,14 @@ void setup() {
 	WiFi.beginSmartConfig(); //< SmartConfigの初期化
 
 	// スマホからのアクセスを待つ
+  i = 0;
 	while (!WiFi.smartConfigDone()) {
 		delay(100);
+    if ((i/5)%2) {digitalWrite(DRIVE_DP,HIGH);} // '.'
+    else         {digitalWrite(DRIVE_DP,LOW);}  // ' '
+    i++;
 	}
 	// スマホからSSIDとパスワードが送られてきた
-  digitalWrite(DRIVE_A, LOW); //  'b'
-  digitalWrite(DRIVE_B, LOW);
-  digitalWrite(DRIVE_C, HIGH);
-  digitalWrite(DRIVE_D, HIGH);
-  digitalWrite(DRIVE_E, HIGH);
-  digitalWrite(DRIVE_F, HIGH);
-  digitalWrite(DRIVE_G, HIGH);
-  digitalWrite(DRIVE_DP, LOW);
 
 	// WiFiに接続
 	while (WiFi.status() != WL_CONNECTED) {
@@ -251,9 +261,9 @@ void setup() {
   digitalWrite(DRIVE_DP, LOW);
 	delay(2000);
 
-#else
+#else // ssid/password をプログラムに直書き
   WiFi.begin(ssid, password);
-  i=0;
+  i = 0;
   while (i<20) {
     if (WiFi.status() == WL_CONNECTED){
       break;      
@@ -268,8 +278,28 @@ void setup() {
   //init and get the time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
-  //====  BME680  ====
-  i=0;
+  //  BME680 Initialize
+  bme680_init();
+
+  //  Start Interrupt for 7seg LED dynamic lighting
+  interrupt_settings();
+}
+//------------------------------------------------------------------
+void loop() {
+
+  if (test_mode != HIGH){
+    bool tmok = getLocalTime(&timeinfo);
+    set_upper_display_for_clock(tmok);
+    set_lower_fisplay_for_various();
+  }
+  else {
+    test_pattern();
+  }
+}
+//------------------------------------------------------------------
+void bme680_init(void)
+{
+  int i=0;
   while (i<4) {  // Start BME680 using I2C, use first device found
     if (BME680.begin(I2C_STANDARD_MODE)){
       BME_exist = true;
@@ -286,8 +316,10 @@ void setup() {
     BME680.setIIRFilter(IIR4);  // Use enumerated type values
     //Serial.print(F("- Setting gas measurement to 320\xC2\xB0\x43 for 150ms\n"));  // "C" symbols
     BME680.setGas(320, 150);  // 320c for 150 milliseconds
-  }
-
+  }  
+}
+void interrupt_settings(void)
+{
   //====  Set Interrupt  ====
   // Use 1st timer of 4 (counted from zero).
   // Set 80 divider for prescaler 
@@ -302,27 +334,27 @@ void setup() {
   timerAlarmWrite(timer, 1000, true);
 
   // Start an alarm
-  timerAlarmEnable(timer);
+  timerAlarmEnable(timer);  
 }
 //------------------------------------------------------------------
-void loop() {
-
-  struct tm timeinfo;
-  static int32_t  temp=0, humidity=0, pressure=0, gas=0;  // BME readings
-
-  //  Clock
-  if (!getLocalTime(&timeinfo)){
-    for (int i=0; i<MAX_DIGIT; ++i){ led_num[0][i] = 11;}
-    led_num[0][4] = 10;
+void set_upper_display_for_clock(bool tmok)
+{
+  if (tmok){
+    led_num[0][0] = timeinfo.tm_hour/10;    // Hour 10の位
+    led_num[0][1] = timeinfo.tm_hour%10;    // Hour 1の位
+    led_num[0][2] = timeinfo.tm_min/10;     // Minute 10の位
+    led_num[0][3] = timeinfo.tm_min%10;     // Minute 1の位
+    led_num[0][4] = (timeinfo.tm_sec%2)?10:12;  // ':'
   }
   else {
-    led_num[0][0] = timeinfo.tm_hour/10;
-    led_num[0][1] = timeinfo.tm_hour%10;
-    led_num[0][2] = timeinfo.tm_min/10;
-    led_num[0][3] = timeinfo.tm_min%10;
-    led_num[0][4] = (timeinfo.tm_sec%2)?10:12;
+    // 時間が取れなかったとき
+    for (int i=0; i<MAX_DIGIT; ++i){ led_num[0][i] = 11;} // '-'
+    led_num[0][4] = 10; // ' '
   }
-
+}
+//------------------------------------------------------------------
+void set_lower_fisplay_for_various(void)
+{
   //  temparature, humidity, air pressure
   if (BME_exist){
     if (timeinfo.tm_sec%10 == 0){
@@ -331,8 +363,7 @@ void loop() {
     }
   }
 
-  flow_counter = timeinfo.tm_sec/2;
-  switch (flow_counter%5){
+  switch ((timeinfo.tm_sec/2)%5){
     default:{
       for(int i=0; i<MAX_DIGIT; ++i){led_num[1][i] = 11;}
       led_num[1][4] = 10;
@@ -387,5 +418,19 @@ void loop() {
 //        led_num[1][4] = 10;
 //        break;
 //      }
+  }
+}
+//------------------------------------------------------------------
+void test_pattern(void)
+{
+  for (int i=0; i<MATRIX_COM; i++){
+    if (i==(free_running_cnt/1000)%5){
+      led_num[0][i] = 28;
+      led_num[1][i] = 28;
+    }
+    else {
+      led_num[0][i] = 10;
+      led_num[1][i] = 10;
+    }
   }
 }
