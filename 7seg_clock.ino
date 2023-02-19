@@ -126,7 +126,7 @@ const uint8_t CHARACTER_TABLE[68][MAX_MATRIX_DRV] = {
   { LOW,HIGH,HIGH, LOW, LOW, LOW, LOW, LOW}, // 35: ' |'  right
   {HIGH, LOW, LOW, LOW, LOW, LOW, LOW, LOW}, // 36: '-'  up
   { LOW, LOW, LOW,HIGH, LOW, LOW, LOW, LOW}, // 37: '_'  down
-  { LOW, LOW, LOW, LOW, LOW, LOW, LOW, LOW}, // 38: ''  nothing
+  { LOW, HIGH,HIGH,LOW, LOW, LOW, HIGH,LOW}, // 38: '-|'  -1
   { LOW, LOW, LOW, LOW, LOW, LOW, LOW, LOW}, // 39: ''  nothing
   {HIGH,HIGH,HIGH, LOW,HIGH,HIGH,HIGH, LOW}, // 40: 'A'
   { LOW, LOW,HIGH,HIGH,HIGH,HIGH,HIGH, LOW}, // 41: 'b'
@@ -379,6 +379,11 @@ void set_lower_fisplay_for_various(void)
       }
       else if (temp > -1000){ // -0.1 .. -9.9
         led_num[1][0] = 11; // '-'
+        led_num[1][1] = ((-temp/100)%10)+20; // +20 -> dot
+        led_num[1][2] = (-temp%100)/10;
+      }
+      else if (temp > -2000){ // -10.1 .. -19.9
+        led_num[1][0] = 38; // '-1'
         led_num[1][1] = ((-temp/100)%10)+20; // +20 -> dot
         led_num[1][2] = (-temp%100)/10;
       }
